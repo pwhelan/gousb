@@ -5,6 +5,7 @@ Introduction
 [![GoDoc][docimg]][doc]
 [![Coverage Status][coverimg]][cover]
 
+
 The gousb package is an attempt at wrapping the libusb library into a Go-like binding.
 
 Supported platforms include:
@@ -19,8 +20,8 @@ As of 2017-07-13 the 2.0 API is considered stable and 1.0 is deprecated.
 
 [coverimg]: https://coveralls.io/repos/github/google/gousb/badge.svg
 [cover]:    https://coveralls.io/github/google/gousb
-[ciimg]:    https://travis-ci.org/google/gousb.svg
-[ci]:       https://travis-ci.org/google/gousb
+[ciimg]:    https://github.com/google/gousb/actions/workflows/build-and-test.yaml/badge.svg
+[ci]:       https://github.com/google/gousb/actions/workflows/build-and-test.yaml
 [docimg]:   https://godoc.org/github.com/google/gousb?status.svg
 [doc]:      https://godoc.org/github.com/google/gousb
 
@@ -36,7 +37,7 @@ Installation
 
 Dependencies
 ------------
-You must first install [libusb-1.0](http://libusb.org/wiki/libusb-1.0).  This is pretty straightforward on linux and darwin.  The cgo package should be able to find it if you install it in the default manner or use your distribution's package manager.  How to tell cgo how to find one installed in a non-default place is beyond the scope of this README.
+You must first install [libusb-1.0](https://github.com/libusb/libusb/wiki).  This is pretty straightforward on linux and darwin.  The cgo package should be able to find it if you install it in the default manner or use your distribution's package manager.  How to tell cgo how to find one installed in a non-default place is beyond the scope of this README.
 
 *Note*: If you are installing this on darwin, you will probably need to run `fixlibusb_darwin.sh /usr/local/lib/libusb-1.0/libusb.h` because of an LLVM incompatibility.  It shouldn't break C programs, though I haven't tried it in anger.
 

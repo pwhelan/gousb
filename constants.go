@@ -22,35 +22,56 @@ import "strconv"
 // Class represents a USB-IF (Implementers Forum) class or subclass code.
 type Class uint8
 
-// Standard classes defined by USB spec.
+// Standard classes defined by USB spec, see https://www.usb.org/defined-class-codes
 const (
-	ClassPerInterface Class = C.LIBUSB_CLASS_PER_INTERFACE
-	ClassAudio        Class = C.LIBUSB_CLASS_AUDIO
-	ClassComm         Class = C.LIBUSB_CLASS_COMM
-	ClassHID          Class = C.LIBUSB_CLASS_HID
-	ClassPrinter      Class = C.LIBUSB_CLASS_PRINTER
-	ClassPTP          Class = C.LIBUSB_CLASS_PTP
-	ClassMassStorage  Class = C.LIBUSB_CLASS_MASS_STORAGE
-	ClassHub          Class = C.LIBUSB_CLASS_HUB
-	ClassData         Class = C.LIBUSB_CLASS_DATA
-	ClassWireless     Class = C.LIBUSB_CLASS_WIRELESS
-	ClassApplication  Class = C.LIBUSB_CLASS_APPLICATION
-	ClassVendorSpec   Class = C.LIBUSB_CLASS_VENDOR_SPEC
+	ClassPerInterface       Class = 0x00
+	ClassAudio              Class = 0x01
+	ClassComm               Class = 0x02
+	ClassHID                Class = 0x03
+	ClassPhysical           Class = 0x05
+	ClassImage              Class = 0x06
+	ClassPTP                Class = ClassImage // legacy name for image
+	ClassPrinter            Class = 0x07
+	ClassMassStorage        Class = 0x08
+	ClassHub                Class = 0x09
+	ClassData               Class = 0x0a
+	ClassSmartCard          Class = 0x0b
+	ClassContentSecurity    Class = 0x0d
+	ClassVideo              Class = 0x0e
+	ClassPersonalHealthcare Class = 0x0f
+	ClassAudioVideo         Class = 0x10
+	ClassBillboard          Class = 0x11
+	ClassUSBTypeCBridge     Class = 0x12
+	ClassDiagnosticDevice   Class = 0xdc
+	ClassWireless           Class = 0xe0
+	ClassMiscellaneous      Class = 0xef
+	ClassApplication        Class = 0xfe
+	ClassVendorSpec         Class = 0xff
 )
 
 var classDescription = map[Class]string{
-	ClassPerInterface: "per-interface",
-	ClassAudio:        "audio",
-	ClassComm:         "communications",
-	ClassHID:          "human interface device",
-	ClassPrinter:      "printer dclass",
-	ClassPTP:          "picture transfer protocol",
-	ClassMassStorage:  "mass storage",
-	ClassHub:          "hub",
-	ClassData:         "data",
-	ClassWireless:     "wireless",
-	ClassApplication:  "application",
-	ClassVendorSpec:   "vendor-specific",
+	ClassPerInterface:       "per-interface",
+	ClassAudio:              "audio",
+	ClassComm:               "communications",
+	ClassHID:                "human interface device",
+	ClassPhysical:           "physical",
+	ClassImage:              "image",
+	ClassPrinter:            "printer",
+	ClassMassStorage:        "mass storage",
+	ClassHub:                "hub",
+	ClassData:               "data",
+	ClassSmartCard:          "smart card",
+	ClassContentSecurity:    "content security",
+	ClassVideo:              "video",
+	ClassPersonalHealthcare: "personal healthcare",
+	ClassAudioVideo:         "audio/video",
+	ClassBillboard:          "billboard",
+	ClassUSBTypeCBridge:     "USB type-C bridge",
+	ClassDiagnosticDevice:   "diagnostic device",
+	ClassWireless:           "wireless",
+	ClassMiscellaneous:      "miscellaneous",
+	ClassApplication:        "application-specific",
+	ClassVendorSpec:         "vendor-specific",
 }
 
 func (c Class) String() string {
@@ -201,28 +222,25 @@ func (ut UsageType) String() string {
 	return usageTypeDescription[ut]
 }
 
-// RequestType identifies a control transfer request type.
-type RequestType uint8
-
-// Control request types defined in the USB spec.
+// Control request type bit fields as defined in the USB spec. All values are
+// of uint8 type.  These constants can be used with Device.Control() method to
+// specify the type and destination of the control request, e.g.
+// `dev.Control(ControlOut|ControlVendor|ControlDevice, ...)`.
 const (
-	RequestTypeStandard = C.LIBUSB_REQUEST_TYPE_STANDARD
-	RequestTypeClass    = C.LIBUSB_REQUEST_TYPE_CLASS
-	RequestTypeVendor   = C.LIBUSB_REQUEST_TYPE_VENDOR
-	RequestTypeReserved = C.LIBUSB_REQUEST_TYPE_RESERVED
+	ControlIn  = C.LIBUSB_ENDPOINT_IN
+	ControlOut = C.LIBUSB_ENDPOINT_OUT
+
+	// "Standard" is explicitly omitted, as functionality of standard requests
+	// is exposed through higher level operations of gousb.
+	ControlClass  = C.LIBUSB_REQUEST_TYPE_CLASS
+	ControlVendor = C.LIBUSB_REQUEST_TYPE_VENDOR
+	// "Reserved" is explicitly omitted, should not be used.
+
+	ControlDevice    = C.LIBUSB_RECIPIENT_DEVICE
+	ControlInterface = C.LIBUSB_RECIPIENT_INTERFACE
+	ControlEndpoint  = C.LIBUSB_RECIPIENT_ENDPOINT
+	ControlOther     = C.LIBUSB_RECIPIENT_OTHER
 )
-
-var requestTypeDescription = map[RequestType]string{
-	RequestTypeStandard: "standard",
-	RequestTypeClass:    "class",
-	RequestTypeVendor:   "vendor",
-	RequestTypeReserved: "reserved",
-}
-
-// String returns a human-readable name of the control transfer request type.
-func (rt RequestType) String() string {
-	return requestTypeDescription[rt]
-}
 
 // Speed identifies the speed of the device.
 type Speed int

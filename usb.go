@@ -112,7 +112,7 @@ The control endpoint is present regardless of the current device config, claimed
 interfaces and their alternate settings. It makes a lot of sense, as the control endpoint is actually used, among others,
 to issue commands to switch the active config or select an alternate setting for an interface.
 
-Control commands are also ofen use to control the behavior of the device. There is no single
+Control commands are also often used to control the behavior of the device. There is no single
 standard for control commands though, and many devices implement their custom control command schema.
 
 Control commands can be issued through Device.Control().
@@ -125,15 +125,26 @@ see the excellent "USB in a nutshell" guide: http://www.beyondlogic.org/usbnutsh
 */
 package gousb
 
+import (
+	"errors"
+	"fmt"
+	"sync"
+)
+
 // Context manages all resources related to USB device handling.
 type Context struct {
 	ctx    *libusbContext
 	done   chan struct{}
 	libusb libusbIntf
+
+	mu      sync.Mutex
+	devices map[*Device]bool
 }
 
 // Debug changes the debug level. Level 0 means no debug, higher levels
 // will print out more debugging information.
+// TODO(sebek): in the next major release, replace int levels with
+// Go-typed constants.
 func (c *Context) Debug(level int) {
 	c.libusb.setDebug(c.ctx, level)
 }
@@ -144,9 +155,10 @@ func newContextWithImpl(impl libusbIntf) *Context {
 		panic(err)
 	}
 	ctx := &Context{
-		ctx:    c,
-		done:   make(chan struct{}),
-		libusb: impl,
+		ctx:     c,
+		done:    make(chan struct{}),
+		libusb:  impl,
+		devices: make(map[*Device]bool),
 	}
 	go impl.handleEvents(ctx.ctx, ctx.done)
 	return ctx
@@ -163,6 +175,9 @@ func NewContext() *Context {
 // If there are any errors enumerating the devices,
 // the final one is returned along with any successfully opened devices.
 func (c *Context) OpenDevices(opener func(desc *DeviceDesc) bool) ([]*Device, error) {
+	if c.ctx == nil {
+		return nil, errors.New("OpenDevices called on a closed or uninitialized Context")
+	}
 	list, err := c.libusb.getDevices(c.ctx)
 	if err != nil {
 		return nil, err
@@ -172,23 +187,26 @@ func (c *Context) OpenDevices(opener func(desc *DeviceDesc) bool) ([]*Device, er
 	var ret []*Device
 	for _, dev := range list {
 		desc, err := c.libusb.getDeviceDesc(dev)
+		defer c.libusb.dereference(dev)
 		if err != nil {
-			c.libusb.dereference(dev)
 			reterr = err
 			continue
 		}
 
-		if opener(desc) {
-			handle, err := c.libusb.open(dev)
-			if err != nil {
-				c.libusb.dereference(dev)
-				reterr = err
-				continue
-			}
-			ret = append(ret, &Device{handle: handle, ctx: c, Desc: desc})
-		} else {
-			c.libusb.dereference(dev)
+		if !opener(desc) {
+			continue
 		}
+		handle, err := c.libusb.open(dev)
+		if err != nil {
+			reterr = err
+			continue
+		}
+		o := &Device{handle: handle, ctx: c, Desc: desc}
+		ret = append(ret, o)
+		c.mu.Lock()
+		c.devices[o] = true
+		c.mu.Unlock()
+
 	}
 	return ret, reterr
 }
@@ -217,13 +235,32 @@ func (c *Context) OpenDeviceWithVIDPID(vid, pid ID) (*Device, error) {
 	return devs[0], nil
 }
 
+func (c *Context) closeDev(d *Device) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.libusb.close(d.handle)
+	delete(c.devices, d)
+}
+
+func (c *Context) checkOpenDevs() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if l := len(c.devices); l > 0 {
+		return fmt.Errorf("Context.Close called while %d Devices are still open, Close may be called only after all previously opened devices were successfuly closed", l)
+	}
+	return nil
+}
+
 // Close releases the Context and all associated resources.
 func (c *Context) Close() error {
-	var ret error
-	c.done <- struct{}{}
-	if c.ctx != nil {
-		ret = c.libusb.exit(c.ctx)
+	if c.ctx == nil {
+		return nil
 	}
+	if err := c.checkOpenDevs(); err != nil {
+		return err
+	}
+	c.done <- struct{}{}
+	err := c.libusb.exit(c.ctx)
 	c.ctx = nil
-	return ret
+	return err
 }

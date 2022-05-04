@@ -43,6 +43,7 @@ int gousb_hotplug_register_callback(
 	void *user_data,
 	libusb_hotplug_callback_handle *handle
 );
+void gousb_set_debug(libusb_context *ctx, int lvl);
 */
 import "C"
 
@@ -172,7 +173,7 @@ type libusbIntf interface {
 	setAlt(*libusbDevHandle, uint8, uint8) error
 
 	// transfer
-	alloc(*libusbDevHandle, *EndpointDesc, time.Duration, int, int, chan struct{}) (*libusbTransfer, error)
+	alloc(*libusbDevHandle, *EndpointDesc, int, int, chan struct{}) (*libusbTransfer, error)
 	cancel(*libusbTransfer) error
 	submit(*libusbTransfer) error
 	buffer(*libusbTransfer) []byte
@@ -225,7 +226,7 @@ func (libusbImpl) getDevices(ctx *libusbContext) ([]*libusbDevice, error) {
 	for _, d := range devs {
 		ret = append(ret, (*libusbDevice)(d))
 	}
-	// devices will be dereferenced later, during close.
+	// devices must be dereferenced by the caller to prevent memory leaks.
 	C.libusb_free_device_list(list, 0)
 	return ret, nil
 }
@@ -247,18 +248,30 @@ func (libusbImpl) exit(c *libusbContext) error {
 }
 
 func (libusbImpl) setDebug(c *libusbContext, lvl int) {
-	C.libusb_set_debug((*C.libusb_context)(c), C.int(lvl))
+	C.gousb_set_debug((*C.libusb_context)(c), C.int(lvl))
 }
 
 func (libusbImpl) getDeviceDesc(d *libusbDevice) (*DeviceDesc, error) {
-	var desc C.struct_libusb_device_descriptor
+	var (
+		desc     C.struct_libusb_device_descriptor
+		pathData [8]uint8
+		path     []int
+		port     int
+	)
 	if err := fromErrNo(C.libusb_get_device_descriptor((*C.libusb_device)(d), &desc)); err != nil {
 		return nil, err
 	}
+	pathLen := int(C.libusb_get_port_numbers((*C.libusb_device)(d), (*C.uint8_t)(&pathData[0]), 8))
+	for _, nPort := range pathData[:pathLen] {
+		port = int(nPort)
+		path = append(path, port)
+	}
+	// Defaults to port = 0, path = [] for root device
 	dev := &DeviceDesc{
 		Bus:                  int(C.libusb_get_bus_number((*C.libusb_device)(d))),
 		Address:              int(C.libusb_get_device_address((*C.libusb_device)(d))),
-		Port:                 int(C.libusb_get_port_number((*C.libusb_device)(d))),
+		Port:                 port,
+		Path:                 path,
 		Speed:                Speed(C.libusb_get_device_speed((*C.libusb_device)(d))),
 		Spec:                 BCD(desc.bcdUSB),
 		Device:               BCD(desc.bcdDevice),
@@ -298,7 +311,9 @@ func (libusbImpl) getDeviceDesc(d *libusbDevice) (*DeviceDesc, error) {
 			Cap:  int(cfg.bNumInterfaces),
 		}
 		c.Interfaces = make([]InterfaceDesc, 0, len(ifaces))
-		for ifNum, iface := range ifaces {
+		// a map of interface numbers to a set of alternate settings numbers
+		hasIntf := make(map[int]map[int]bool)
+		for _, iface := range ifaces {
 			if iface.num_altsetting == 0 {
 				continue
 			}
@@ -310,7 +325,7 @@ func (libusbImpl) getDeviceDesc(d *libusbDevice) (*DeviceDesc, error) {
 				Cap:  int(iface.num_altsetting),
 			}
 			descs := make([]InterfaceSetting, 0, len(alts))
-			for altNum, alt := range alts {
+			for _, alt := range alts {
 				i := InterfaceSetting{
 					Number:     int(alt.bInterfaceNumber),
 					Alternate:  int(alt.bAlternateSetting),
@@ -319,12 +334,16 @@ func (libusbImpl) getDeviceDesc(d *libusbDevice) (*DeviceDesc, error) {
 					Protocol:   Protocol(alt.bInterfaceProtocol),
 					iInterface: int(alt.iInterface),
 				}
-				if ifNum != i.Number {
-					return nil, fmt.Errorf("config %d interface at index %d has number %d, USB standard states they should be identical", c.Number, ifNum, i.Number)
+
+				if hasIntf[i.Number][i.Alternate] {
+					log.Printf("Device on bus %d address %d offered a descriptor for config %d with two different entries with the same interface number (%d) and the same alternate setting number (%d). gousb will use only the first one.", dev.Bus, dev.Address, c.Number, i.Number, i.Alternate)
+					continue
 				}
-				if altNum != i.Alternate {
-					return nil, fmt.Errorf("config %d interface %d alternate settings at index %d has number %d, USB standard states they should be identical", c.Number, i.Number, altNum, i.Alternate)
+				if hasIntf[i.Number] == nil {
+					hasIntf[i.Number] = make(map[int]bool)
 				}
+				hasIntf[i.Number][i.Alternate] = true
+
 				var ends []C.struct_libusb_endpoint_descriptor
 				*(*reflect.SliceHeader)(unsafe.Pointer(&ends)) = reflect.SliceHeader{
 					Data: uintptr(unsafe.Pointer(alt.endpoint)),
@@ -449,7 +468,7 @@ func (libusbImpl) setAlt(d *libusbDevHandle, iface, setup uint8) error {
 	return fromErrNo(C.libusb_set_interface_alt_setting((*C.libusb_device_handle)(d), C.int(iface), C.int(setup)))
 }
 
-func (libusbImpl) alloc(d *libusbDevHandle, ep *EndpointDesc, timeout time.Duration, isoPackets int, bufLen int, done chan struct{}) (*libusbTransfer, error) {
+func (libusbImpl) alloc(d *libusbDevHandle, ep *EndpointDesc, isoPackets int, bufLen int, done chan struct{}) (*libusbTransfer, error) {
 	xfer := C.gousb_alloc_transfer_and_buffer(C.int(bufLen), C.int(isoPackets))
 	if xfer == nil {
 		return nil, fmt.Errorf("gousb_alloc_transfer_and_buffer(%d, %d) failed", bufLen, isoPackets)
@@ -459,7 +478,6 @@ func (libusbImpl) alloc(d *libusbDevHandle, ep *EndpointDesc, timeout time.Durat
 	}
 	xfer.dev_handle = (*C.libusb_device_handle)(d)
 	xfer.endpoint = C.uchar(ep.Address)
-	xfer.timeout = C.uint(timeout / time.Millisecond)
 	xfer._type = C.uchar(ep.TransferType)
 	xfer.num_iso_packets = C.int(isoPackets)
 	ret := (*libusbTransfer)(xfer)
@@ -525,11 +543,12 @@ func xferCallback(xfer *C.struct_libusb_transfer) {
 	ch <- struct{}{}
 }
 
-// for benchmarking and testing
+// for benchmarking of method on implementation vs vanilla function.
 func libusbSetDebug(c *libusbContext, lvl int) {
-	C.libusb_set_debug((*C.libusb_context)(c), C.int(lvl))
+	C.gousb_set_debug((*C.libusb_context)(c), C.int(lvl))
 }
 
+// for obtaining unique CGo pointers.
 func newDevicePointer() *libusbDevice {
 	return (*libusbDevice)(unsafe.Pointer(C.malloc(1)))
 }
@@ -623,4 +642,12 @@ func (libusbImpl) registerHotplugCallback(ctx *libusbContext, events HotplugEven
 		}
 		hotplugCallbackMap.Unlock()
 	}, nil
+}
+
+func newContextPointer() *libusbContext {
+	return (*libusbContext)(unsafe.Pointer(C.malloc(1)))
+}
+
+func newDevHandlePointer() *libusbDevHandle {
+	return (*libusbDevHandle)(unsafe.Pointer(C.malloc(1)))
 }

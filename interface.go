@@ -23,14 +23,13 @@ import (
 // InterfaceDesc contains information about a USB interface, extracted from
 // the descriptor.
 type InterfaceDesc struct {
-	// Number is the number of this interface, a zero-based index in the array
-	// of interfaces supported by the device configuration.
+	// Number is the number of this interface.
 	Number int
 	// AltSettings is a list of alternate settings supported by the interface.
 	AltSettings []InterfaceSetting
 }
 
-// String returns a human-readable descripton of the interface descriptor and
+// String returns a human-readable description of the interface descriptor and
 // its alternate settings.
 func (i InterfaceDesc) String() string {
 	return fmt.Sprintf("Interface %d (%d alternate settings)", i.Number, len(i.AltSettings))
@@ -65,7 +64,7 @@ func (a InterfaceSetting) sortedEndpointIds() []string {
 	return eps
 }
 
-// String returns a human-readable descripton of the particular
+// String returns a human-readable description of the particular
 // alternate setting of an interface.
 func (a InterfaceSetting) String() string {
 	return fmt.Sprintf("Interface %d alternate setting %d (available endpoints: %v)", a.Number, a.Alternate, a.sortedEndpointIds())
